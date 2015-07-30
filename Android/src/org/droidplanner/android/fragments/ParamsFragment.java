@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Bundle;
+import android.support.v7.widget.SearchView;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
@@ -34,6 +35,7 @@ import com.o3dr.services.android.lib.drone.property.Parameters;
 
 import org.droidplanner.android.R;
 import org.droidplanner.android.dialogs.EditInputDialog;
+import org.droidplanner.android.dialogs.SupportEditInputDialog;
 import org.droidplanner.android.dialogs.openfile.OpenFileDialog;
 import org.droidplanner.android.dialogs.openfile.OpenParameterDialog;
 import org.droidplanner.android.dialogs.parameters.DialogParameterInfo;
@@ -62,8 +64,8 @@ public class ParamsFragment extends ApiListenerListFragment {
 
     static {
         intentFilter.addAction(AttributeEvent.PARAMETERS_REFRESH_STARTED);
-        intentFilter.addAction(AttributeEvent.PARAMETERS_REFRESH_ENDED);
-        intentFilter.addAction(AttributeEvent.PARAMETERS_RECEIVED);
+        intentFilter.addAction(AttributeEvent.PARAMETERS_REFRESH_COMPLETED);
+        intentFilter.addAction(AttributeEvent.PARAMETER_RECEIVED);
         intentFilter.addAction(AttributeEvent.STATE_CONNECTED);
         intentFilter.addAction(AttributeEvent.TYPE_UPDATED);
     }
@@ -77,7 +79,7 @@ public class ParamsFragment extends ApiListenerListFragment {
                     startProgress();
                     break;
 
-                case AttributeEvent.PARAMETERS_REFRESH_ENDED:
+                case AttributeEvent.PARAMETERS_REFRESH_COMPLETED:
                     stopProgress();
                     /*** FALL - THROUGH ***/
                 case AttributeEvent.STATE_CONNECTED:
@@ -89,7 +91,7 @@ public class ParamsFragment extends ApiListenerListFragment {
                     }
                     break;
 
-                case AttributeEvent.PARAMETERS_RECEIVED:
+                case AttributeEvent.PARAMETER_RECEIVED:
                     final int defaultValue = -1;
                     int index = intent.getIntExtra(AttributeEventExtra.EXTRA_PARAMETER_INDEX, defaultValue);
                     int count = intent.getIntExtra(AttributeEventExtra.EXTRA_PARAMETERS_COUNT, defaultValue);
@@ -106,9 +108,8 @@ public class ParamsFragment extends ApiListenerListFragment {
     };
 
     private ProgressDialog progressDialog;
-
+    private SearchView searchParams;
     private ProgressBar mLoadingProgress;
-    private EditText mParamsFilter;
 
     private DroidPlannerPrefs mPrefs;
     private ParamsAdapter adapter;
@@ -117,6 +118,7 @@ public class ParamsFragment extends ApiListenerListFragment {
      * If the parameters were loaded from a file, the filename is stored here.
      */
     private String openedParamsFilename;
+    private View searchButton;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -132,8 +134,7 @@ public class ParamsFragment extends ApiListenerListFragment {
 
             // load adapter items
             @SuppressWarnings("unchecked")
-            final ArrayList<ParamsAdapterItem> pwms = savedInstanceState.getParcelableArrayList
-                    (ADAPTER_ITEMS);
+            final ArrayList<ParamsAdapterItem> pwms = savedInstanceState.getParcelableArrayList(ADAPTER_ITEMS);
             adapter = new ParamsAdapter(getActivity(), R.layout.row_params, pwms);
 
         } else {
@@ -161,87 +162,30 @@ public class ParamsFragment extends ApiListenerListFragment {
     public void onViewCreated(View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        mLoadingProgress = (ProgressBar) view.findViewById(R.id.reload_progress);
-        mLoadingProgress.setVisibility(View.GONE);
-
-        mParamsFilter = (EditText) view.findViewById(R.id.parameter_filter);
-        mParamsFilter.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+        searchParams = (SearchView) view.findViewById(R.id.params_filter);
+        searchParams.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
             @Override
-            public void onFocusChange(View v, boolean hasFocus) {
-                if (!hasFocus) {
-                    disableParameterFilter();
-                }
-            }
-        });
-        mParamsFilter.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_UP:
-                        enableParameterFilter();
-                        break;
-                }
+            public boolean onQueryTextSubmit(String s) {
+                filterInput(s);
                 return false;
             }
-        });
-        mParamsFilter.addTextChangedListener(new TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-            }
 
             @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-            }
-
-            @Override
-            public void afterTextChanged(Editable s) {
-                filterInput(s.toString());
-            }
-        });
-        mParamsFilter.setOnEditorActionListener(new TextView.OnEditorActionListener() {
-            @Override
-            public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
-                filterInput(v.getText());
-
-                if (actionId == EditorInfo.IME_NULL || actionId == EditorInfo.IME_ACTION_SEARCH) {
-                    mParamsFilter.clearFocus();
-                }
+            public boolean onQueryTextChange(String s) {
+                filterInput(s);
                 return true;
             }
         });
-
-
-        // listen for clicks on empty
-        view.findViewById(android.R.id.empty).setOnClickListener(new View.OnClickListener() {
+        searchButton = searchParams.findViewById(android.support.v7.appcompat.R.id.search_button);
+        searchParams.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                refreshParameters();
+                searchButton.callOnClick();
             }
         });
 
-    }
-
-    private void enableParameterFilter() {
-        mParamsFilter.setInputType(InputType.TYPE_CLASS_TEXT);
-        mParamsFilter.requestFocus();
-
-        final Context context = getActivity();
-        final InputMethodManager imm = (InputMethodManager) context.getSystemService(Context
-                .INPUT_METHOD_SERVICE);
-        if (imm != null) {
-            imm.showSoftInput(mParamsFilter, InputMethodManager.SHOW_IMPLICIT);
-        }
-    }
-
-    private void disableParameterFilter() {
-        mParamsFilter.setInputType(InputType.TYPE_NULL);
-
-        final Context context = getActivity();
-        final InputMethodManager imm = (InputMethodManager) context.getSystemService(Context
-                .INPUT_METHOD_SERVICE);
-        if (imm != null) {
-            imm.hideSoftInputFromWindow(mParamsFilter.getWindowToken(), InputMethodManager.HIDE_IMPLICIT_ONLY);
-        }
+        mLoadingProgress = (ProgressBar) view.findViewById(R.id.reload_progress);
+        mLoadingProgress.setVisibility(View.GONE);
     }
 
     private void filterInput(CharSequence input) {
@@ -262,7 +206,7 @@ public class ParamsFragment extends ApiListenerListFragment {
                 loadAdapter(parametersList, false);
         }
 
-        toggleParameterFilter(isParameterFilterVisible(), false);
+        toggleParameterFilter(isParameterFilterVisible());
 
         getBroadcastManager().registerReceiver(broadcastReceiver, intentFilter);
     }
@@ -277,8 +221,7 @@ public class ParamsFragment extends ApiListenerListFragment {
         super.onSaveInstanceState(outState);
 
         // save adapter items
-        final ArrayList<ParamsAdapterItem> pwms = new ArrayList<ParamsAdapterItem>(adapter
-                .getOriginalValues());
+        final ArrayList<ParamsAdapterItem> pwms = new ArrayList<ParamsAdapterItem>(adapter.getOriginalValues());
         outState.putParcelableArrayList(ADAPTER_ITEMS, pwms);
 
         outState.putString(EXTRA_OPENED_PARAMS_FILENAME, this.openedParamsFilename);
@@ -312,32 +255,21 @@ public class ParamsFragment extends ApiListenerListFragment {
                 saveParametersToFile();
                 break;
 
-            case R.id.menu_filter_params:
-                final boolean isEnabled = !isParameterFilterVisible();
-                toggleParameterFilter(isEnabled, isEnabled);
-                break;
-
             default:
                 return super.onOptionsItemSelected(item);
         }
         return true;
     }
 
-    private void toggleParameterFilter(boolean isVisible, boolean enableInput) {
+    private void toggleParameterFilter(boolean isVisible) {
         if (isVisible) {
             //Show the parameter filter
-            mParamsFilter.setVisibility(View.VISIBLE);
-            filterInput(mParamsFilter.getText());
+            searchParams.setVisibility(View.VISIBLE);
+            filterInput(searchParams.getQuery());
 
-            if (enableInput) {
-                enableParameterFilter();
-            } else {
-                disableParameterFilter();
-            }
         } else {
             //Hide the parameter filter
-            disableParameterFilter();
-            mParamsFilter.setVisibility(View.GONE);
+            searchParams.setVisibility(View.GONE);
             filterInput(null);
         }
 
@@ -407,9 +339,10 @@ public class ParamsFragment extends ApiListenerListFragment {
                 ? FileStream.getParameterFilename("Parameters-")
                 : openedParamsFilename;
 
-        final EditInputDialog dialog = EditInputDialog.newInstance(context,
-                getString(R.string.label_enter_filename), defaultFilename,
-                new EditInputDialog.Listener() {
+        final SupportEditInputDialog dialog = SupportEditInputDialog.newInstance(getString(R.string
+                        .label_enter_filename),
+                defaultFilename,
+                new SupportEditInputDialog.Listener() {
                     @Override
                     public void onOk(CharSequence input) {
                         final List<Parameter> parameters = new ArrayList<Parameter>();
@@ -449,11 +382,7 @@ public class ParamsFragment extends ApiListenerListFragment {
             adapter.loadParameters(prunedParameters);
         }
 
-        if (mParamsFilter != null && mParamsFilter.getVisibility() == View.VISIBLE) {
-            mParamsFilter.setText("");
-        } else {
-            filterInput(null);
-        }
+        filterInput(searchParams.getQuery());
     }
 
     private void startProgress() {

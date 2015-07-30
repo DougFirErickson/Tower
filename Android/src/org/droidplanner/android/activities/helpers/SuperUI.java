@@ -9,17 +9,25 @@ import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.support.v4.app.NavUtils;
 import android.support.v4.content.LocalBroadcastManager;
-import android.support.v7.app.ActionBarActivity;
+import android.support.v7.app.AppCompatActivity;
 import android.view.Menu;
 import android.view.MenuItem;
 
 import com.o3dr.android.client.Drone;
+import com.o3dr.android.client.apis.drone.DroneStateApi;
 import com.o3dr.services.android.lib.drone.attribute.AttributeEvent;
+import com.o3dr.services.android.lib.drone.attribute.AttributeType;
+import com.o3dr.services.android.lib.drone.property.Type;
+import com.o3dr.services.android.lib.drone.property.VehicleMode;
 
 import org.droidplanner.android.DroidPlannerApp;
 import org.droidplanner.android.R;
+import org.droidplanner.android.dialogs.SlideToUnlockDialog;
+import org.droidplanner.android.dialogs.SupportYesNoDialog;
+import org.droidplanner.android.dialogs.SupportYesNoWithPrefsDialog;
 import org.droidplanner.android.dialogs.YesNoDialog;
 import org.droidplanner.android.dialogs.YesNoWithPrefsDialog;
+import org.droidplanner.android.fragments.SettingsFragment;
 import org.droidplanner.android.proxy.mission.MissionProxy;
 import org.droidplanner.android.utils.Utils;
 import org.droidplanner.android.utils.prefs.DroidPlannerPrefs;
@@ -29,14 +37,14 @@ import org.droidplanner.android.utils.unit.systems.UnitSystem;
 /**
  * Parent class for the app activity classes.
  */
-public abstract class SuperUI extends ActionBarActivity implements DroidPlannerApp.ApiListener {
+public abstract class SuperUI extends AppCompatActivity implements DroidPlannerApp.ApiListener {
 
     private static final IntentFilter superIntentFilter = new IntentFilter();
 
     static {
         superIntentFilter.addAction(AttributeEvent.STATE_CONNECTED);
         superIntentFilter.addAction(AttributeEvent.STATE_DISCONNECTED);
-        superIntentFilter.addAction(Utils.ACTION_UPDATE_OPTIONS_MENU);
+        superIntentFilter.addAction(SettingsFragment.ACTION_ADVANCED_MENU_UPDATED);
     }
 
     private final BroadcastReceiver superReceiver = new BroadcastReceiver() {
@@ -52,8 +60,8 @@ public abstract class SuperUI extends ActionBarActivity implements DroidPlannerA
                     onDroneDisconnected();
                     break;
 
-                case Utils.ACTION_UPDATE_OPTIONS_MENU:
-                    invalidateOptionsMenu();
+                case SettingsFragment.ACTION_ADVANCED_MENU_UPDATED:
+                    supportInvalidateOptionsMenu();
                     break;
             }
         }
@@ -171,10 +179,10 @@ public abstract class SuperUI extends ActionBarActivity implements DroidPlannerA
             menu.setGroupEnabled(R.id.menu_group_connected, true);
             menu.setGroupVisible(R.id.menu_group_connected, true);
 
-            final boolean isAdvancedEnabled = mAppPrefs.isAdvancedMenuEnabled();
-            final MenuItem advancedSubMenu = menu.findItem(R.id.menu_advanced);
-            advancedSubMenu.setEnabled(isAdvancedEnabled);
-            advancedSubMenu.setVisible(isAdvancedEnabled);
+            final MenuItem killSwitchItem = menu.findItem(R.id.menu_kill_switch);
+            final boolean isKillEnabled = mAppPrefs.isKillSwitchEnabled();
+            killSwitchItem.setEnabled(isKillEnabled);
+            killSwitchItem.setVisible(isKillEnabled);
 
             final boolean areMissionMenusEnabled = enableMissionMenus();
 
@@ -214,10 +222,10 @@ public abstract class SuperUI extends ActionBarActivity implements DroidPlannerA
                 if (missionProxy.getItems().isEmpty() || missionProxy.hasTakeoffAndLandOrRTL()) {
                     missionProxy.sendMissionToAPM(dpApi);
                 } else {
-                    YesNoWithPrefsDialog dialog = YesNoWithPrefsDialog.newInstance(
+                    SupportYesNoWithPrefsDialog dialog = SupportYesNoWithPrefsDialog.newInstance(
                             getApplicationContext(), "Mission Upload",
                             "Do you want to append a Takeoff and RTL to your " + "mission?", "Ok",
-                            "Skip", new YesNoDialog.Listener() {
+                            "Skip", new SupportYesNoDialog.Listener() {
 
                                 @Override
                                 public void onYes() {
@@ -229,7 +237,7 @@ public abstract class SuperUI extends ActionBarActivity implements DroidPlannerA
                                 public void onNo() {
                                     missionProxy.sendMissionToAPM(dpApi);
                                 }
-                            }, getString(R.string.pref_auto_insert_mission_takeoff_rtl_land_key));
+                            }, DroidPlannerPrefs.PREF_AUTO_INSERT_MISSION_TAKEOFF_RTL_LAND);
 
                     if (dialog != null) {
                         dialog.show(getSupportFragmentManager(), "Mission Upload check.");
@@ -241,14 +249,15 @@ public abstract class SuperUI extends ActionBarActivity implements DroidPlannerA
             case R.id.menu_download_mission:
                 dpApi.loadWaypoints();
                 return true;
-            case R.id.menu_triggerCamera:
-                dpApi.triggerCamera();
-                return true;
-            case R.id.menu_epm_grab:
-                dpApi.epmCommand(false);
-                return true;
-            case R.id.menu_epm_release:
-                dpApi.epmCommand(true);
+
+            case R.id.menu_kill_switch:
+                SlideToUnlockDialog unlockDialog = SlideToUnlockDialog.newInstance("disable vehicle", new Runnable() {
+                    @Override
+                    public void run() {
+                        DroneStateApi.arm(dpApp.getDrone(), false, true);
+                    }
+                });
+                unlockDialog.show(getSupportFragmentManager(), "Slide to use the Kill Switch");
                 return true;
 
             case android.R.id.home:

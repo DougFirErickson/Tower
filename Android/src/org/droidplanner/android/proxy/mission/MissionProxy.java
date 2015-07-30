@@ -22,6 +22,7 @@ import com.o3dr.services.android.lib.drone.mission.item.command.ReturnToLaunch;
 import com.o3dr.services.android.lib.drone.mission.item.command.Takeoff;
 import com.o3dr.services.android.lib.drone.mission.item.complex.StructureScanner;
 import com.o3dr.services.android.lib.drone.mission.item.complex.Survey;
+import com.o3dr.services.android.lib.drone.mission.item.complex.SurveyDetail;
 import com.o3dr.services.android.lib.drone.mission.item.spatial.BaseSpatialItem;
 import com.o3dr.services.android.lib.drone.mission.item.spatial.RegionOfInterest;
 import com.o3dr.services.android.lib.drone.mission.item.spatial.SplineWaypoint;
@@ -36,6 +37,7 @@ import org.droidplanner.android.utils.analytics.GAUtils;
 import org.droidplanner.android.utils.collection.CircularQueue;
 import org.droidplanner.android.utils.file.IO.MissionReader;
 import org.droidplanner.android.utils.file.IO.MissionWriter;
+import org.droidplanner.android.utils.prefs.DroidPlannerPrefs;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -49,7 +51,6 @@ public class MissionProxy implements DPMap.PathSource {
 
     public static final String ACTION_MISSION_PROXY_UPDATE = Utils.PACKAGE_NAME + ".ACTION_MISSION_PROXY_UPDATE";
 
-    private static final double DEFAULT_ALTITUDE = 20; //meters
     private static final int UNDO_BUFFER_SIZE = 30;
 
     private static final IntentFilter eventFilter = new IntentFilter();
@@ -88,6 +89,7 @@ public class MissionProxy implements DPMap.PathSource {
     private final List<MissionItemProxy> missionItemProxies = new ArrayList<MissionItemProxy>();
 
     private final LocalBroadcastManager lbm;
+    private final DroidPlannerPrefs dpPrefs;
     private Drone drone;
 
     private final CircularArray<Mission> undoBuffer = new CircularArray<>(UNDO_BUFFER_SIZE);
@@ -100,6 +102,8 @@ public class MissionProxy implements DPMap.PathSource {
         this.currentMission = generateMission(true);
         lbm = LocalBroadcastManager.getInstance(context);
         lbm.registerReceiver(eventReceiver, eventFilter);
+
+        dpPrefs = new DroidPlannerPrefs(context);
     }
 
     public void setDrone(Drone drone){
@@ -258,7 +262,7 @@ public class MissionProxy implements DPMap.PathSource {
             }
         }
 
-        return DEFAULT_ALTITUDE;
+        return dpPrefs.getDefaultAltitude();
     }
 
     /**
@@ -329,7 +333,7 @@ public class MissionProxy implements DPMap.PathSource {
 
     public void addTakeoff() {
         Takeoff takeoff = new Takeoff();
-        takeoff.setTakeoffAltitude(10);
+        takeoff.setTakeoffAltitude(dpPrefs.getDefaultAltitude());
         addMissionItem(takeoff);
     }
 
@@ -363,6 +367,11 @@ public class MissionProxy implements DPMap.PathSource {
                 MissionItem firstItem = missionItemProxies.get(0).getMissionItem();
                 if (firstItem instanceof MissionItem.SpatialItem)
                     defaultAlt = ((MissionItem.SpatialItem) firstItem).getCoordinate().getAltitude();
+                else if (firstItem instanceof Survey) {
+                    final SurveyDetail surveyDetail = ((Survey) firstItem).getSurveyDetail();
+                    if (surveyDetail != null)
+                        defaultAlt = surveyDetail.getAltitude();
+                }
             }
 
             final Takeoff takeOff = new Takeoff();
@@ -504,7 +513,7 @@ public class MissionProxy implements DPMap.PathSource {
 
         MissionItem previous = missionItemProxies.get(index - 1).getMissionItem();
         if (previous instanceof MissionItem.SpatialItem) {
-            return MathUtils.getDistance(((MissionItem.SpatialItem) waypoint).getCoordinate(),
+            return MathUtils.getDistance3D(((MissionItem.SpatialItem) waypoint).getCoordinate(),
                     ((MissionItem.SpatialItem) previous).getCoordinate());
         }
 
@@ -625,7 +634,8 @@ public class MissionProxy implements DPMap.PathSource {
                     position.getLongitude(), spatialItem.getCoordinate().getAltitude()));
 
             if (spatialItem instanceof StructureScanner) {
-                this.drone.buildMissionItemsAsync(missionItemsBuiltListener, (StructureScanner) spatialItem);
+                this.drone.buildMissionItemsAsync(new StructureScanner[]{(StructureScanner) spatialItem},
+                        missionItemsBuiltListener);
             }
 
             notifyMissionUpdate();
@@ -638,7 +648,7 @@ public class MissionProxy implements DPMap.PathSource {
 
     public void movePolygonPoint(Survey survey, int index, LatLong position) {
         survey.getPolygonPoints().get(index).set(position);
-        this.drone.buildMissionItemsAsync(missionItemsBuiltListener, survey);
+        this.drone.buildMissionItemsAsync(new Survey[]{survey}, missionItemsBuiltListener);
         notifyMissionUpdate();
     }
 
@@ -722,7 +732,7 @@ public class MissionProxy implements DPMap.PathSource {
         double length = 0;
         if (points.size() > 1) {
             for (int i = 1; i < points.size(); i++) {
-                length += MathUtils.getDistance(points.get(i - 1), points.get(i));
+                length += MathUtils.getDistance2D(points.get(i - 1), points.get(i));
             }
         }
 

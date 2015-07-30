@@ -28,6 +28,7 @@ import org.beyene.sius.unit.length.LengthUnit;
 import org.droidplanner.android.R;
 import org.droidplanner.android.activities.interfaces.OnEditorInteraction;
 import org.droidplanner.android.dialogs.EditInputDialog;
+import org.droidplanner.android.dialogs.SupportEditInputDialog;
 import org.droidplanner.android.dialogs.openfile.OpenFileDialog;
 import org.droidplanner.android.dialogs.openfile.OpenMissionDialog;
 import org.droidplanner.android.fragments.EditorListFragment;
@@ -69,7 +70,7 @@ public class EditorActivity extends DrawerNavigationUI implements OnPathFinished
     static {
         eventFilter.addAction(MissionProxy.ACTION_MISSION_PROXY_UPDATE);
         eventFilter.addAction(AttributeEvent.MISSION_RECEIVED);
-        eventFilter.addAction(AttributeEvent.PARAMETERS_REFRESH_ENDED);
+        eventFilter.addAction(AttributeEvent.PARAMETERS_REFRESH_COMPLETED);
     }
 
     private final BroadcastReceiver eventReceiver = new BroadcastReceiver() {
@@ -77,7 +78,7 @@ public class EditorActivity extends DrawerNavigationUI implements OnPathFinished
         public void onReceive(Context context, Intent intent) {
             final String action = intent.getAction();
             switch (action) {
-                case AttributeEvent.PARAMETERS_REFRESH_ENDED:
+                case AttributeEvent.PARAMETERS_REFRESH_COMPLETED:
                 case MissionProxy.ACTION_MISSION_PROXY_UPDATE:
                     updateMissionLength();
                     break;
@@ -125,7 +126,12 @@ public class EditorActivity extends DrawerNavigationUI implements OnPathFinished
 
         fragmentManager = getSupportFragmentManager();
 
-        gestureMapFragment = ((GestureMapFragment) fragmentManager.findFragmentById(R.id.gestureMapFragment));
+        gestureMapFragment = ((GestureMapFragment) fragmentManager.findFragmentById(R.id.editor_map_fragment));
+        if(gestureMapFragment == null){
+            gestureMapFragment = new GestureMapFragment();
+            fragmentManager.beginTransaction().add(R.id.editor_map_fragment, gestureMapFragment).commit();
+        }
+
         editorToolsFragment = (EditorToolsFragment) fragmentManager.findFragmentById(R.id.editor_tools_fragment);
         editorListFragment = (EditorListFragment) fragmentManager.findFragmentById(R.id.mission_list_fragment);
 
@@ -321,8 +327,9 @@ public class EditorActivity extends DrawerNavigationUI implements OnPathFinished
                 ? FileStream.getWaypointFilename("waypoints")
                 : openedMissionFilename;
 
-        final EditInputDialog dialog = EditInputDialog.newInstance(context, getString(R.string.label_enter_filename),
-                defaultFilename, new EditInputDialog.Listener() {
+        final SupportEditInputDialog dialog = SupportEditInputDialog.newInstance(getString(R.string
+                        .label_enter_filename),
+                defaultFilename, new SupportEditInputDialog.Listener() {
                     @Override
                     public void onOk(CharSequence input) {
                         if (missionProxy.writeMissionToFile(input.toString())) {

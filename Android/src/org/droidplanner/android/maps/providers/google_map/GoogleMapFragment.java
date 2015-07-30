@@ -11,12 +11,15 @@ import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Point;
 import android.location.Location;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.support.v4.app.FragmentActivity;
 import android.support.v4.content.LocalBroadcastManager;
-import android.util.Log;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Toast;
@@ -24,8 +27,10 @@ import android.widget.Toast;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
 import com.google.android.gms.common.api.Api;
-import com.google.android.gms.location.LocationListener;
+import com.google.android.gms.location.LocationAvailability;
+import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.maps.CameraUpdate;
 import com.google.android.gms.maps.CameraUpdateFactory;
@@ -47,6 +52,8 @@ import com.google.android.gms.maps.model.Polyline;
 import com.google.android.gms.maps.model.PolylineOptions;
 import com.google.android.gms.maps.model.TileOverlay;
 import com.google.android.gms.maps.model.TileOverlayOptions;
+import com.google.android.gms.maps.model.TileProvider;
+import com.google.android.gms.maps.model.VisibleRegion;
 import com.o3dr.android.client.Drone;
 import com.o3dr.services.android.lib.coordinate.LatLong;
 import com.o3dr.services.android.lib.drone.attribute.AttributeEvent;
@@ -58,46 +65,45 @@ import com.o3dr.services.android.lib.util.googleApi.GoogleApiClientManager.Googl
 
 import org.droidplanner.android.DroidPlannerApp;
 import org.droidplanner.android.R;
-import org.droidplanner.android.helpers.LocalMapTileProvider;
+import org.droidplanner.android.fragments.SettingsFragment;
 import org.droidplanner.android.maps.DPMap;
 import org.droidplanner.android.maps.MarkerInfo;
 import org.droidplanner.android.maps.providers.DPMapProvider;
+import org.droidplanner.android.maps.providers.google_map.tiles.mapbox.MapboxTileProvider;
+import org.droidplanner.android.maps.providers.google_map.tiles.mapbox.MapboxUtils;
+import org.droidplanner.android.maps.providers.google_map.tiles.mapbox.OfflineTileProvider;
 import org.droidplanner.android.utils.DroneHelper;
 import org.droidplanner.android.utils.collection.HashBiMap;
 import org.droidplanner.android.utils.prefs.AutoPanMode;
 import org.droidplanner.android.utils.prefs.DroidPlannerPrefs;
 
+import java.net.HttpURLConnection;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class GoogleMapFragment extends SupportMapFragment implements DPMap, LocationListener, GoogleApiClientManager.ManagerListener {
+import timber.log.Timber;
 
-    private static final String TAG = GoogleMapFragment.class.getSimpleName();
+public class GoogleMapFragment extends SupportMapFragment implements DPMap, GoogleApiClientManager.ManagerListener {
 
-    public static final String PREF_MAP_TYPE = "pref_map_type";
-
-    public static final String MAP_TYPE_SATELLITE = "Satellite";
-    public static final String MAP_TYPE_HYBRID = "Hybrid";
-    public static final String MAP_TYPE_NORMAL = "Normal";
-    public static final String MAP_TYPE_TERRAIN = "Terrain";
-
-    // TODO: update the interval based on the user's current activity.
     private static final long USER_LOCATION_UPDATE_INTERVAL = 30000; // ms
-    private static final long USER_LOCATION_UPDATE_FASTEST_INTERVAL = 1000; // ms
+    private static final long USER_LOCATION_UPDATE_FASTEST_INTERVAL = 5000; // ms
     private static final float USER_LOCATION_UPDATE_MIN_DISPLACEMENT = 0; // m
 
     private static final float GO_TO_MY_LOCATION_ZOOM = 19f;
+
+    private static final int ONLINE_TILE_PROVIDER_Z_INDEX = -1;
+    private static final int OFFLINE_TILE_PROVIDER_Z_INDEX = -2;
 
     private static final IntentFilter eventFilter = new IntentFilter();
 
     static {
         eventFilter.addAction(AttributeEvent.GPS_POSITION);
+        eventFilter.addAction(SettingsFragment.ACTION_MAP_ROTATION_PREFERENCE_UPDATED);
     }
 
     private final static Api<? extends Api.ApiOptions.NotRequiredOptions>[] apisList = new Api[]{LocationServices.API};
@@ -120,6 +126,15 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
                         }
                     }
                     break;
+
+                case SettingsFragment.ACTION_MAP_ROTATION_PREFERENCE_UPDATED:
+                    getMapAsync(new OnMapReadyCallback() {
+                        @Override
+                        public void onMapReady(GoogleMap googleMap) {
+                            setupMapUI(googleMap);
+                        }
+                    });
+                    break;
             }
         }
     };
@@ -130,6 +145,52 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
 
     private final AtomicReference<AutoPanMode> mPanMode = new AtomicReference<AutoPanMode>(
             AutoPanMode.DISABLED);
+
+    private final Handler handler = new Handler();
+
+    private final LocationCallback locationCb = new LocationCallback() {
+        @Override
+        public void onLocationAvailability(LocationAvailability locationAvailability) {
+            super.onLocationAvailability(locationAvailability);
+        }
+
+        @Override
+        public void onLocationResult(LocationResult result) {
+            super.onLocationResult(result);
+
+            final Location location = result.getLastLocation();
+            if (location == null)
+                return;
+
+            //Update the user location icon.
+            if (userMarker == null) {
+                final MarkerOptions options = new MarkerOptions()
+                        .position(new LatLng(location.getLatitude(), location.getLongitude()))
+                        .draggable(false)
+                        .flat(true)
+                        .visible(true)
+                        .icon(BitmapDescriptorFactory.fromResource(R.drawable.blue));
+
+                getMapAsync(new OnMapReadyCallback() {
+                    @Override
+                    public void onMapReady(GoogleMap googleMap) {
+                        userMarker = googleMap.addMarker(options);
+                    }
+                });
+            } else {
+                userMarker.setPosition(new LatLng(location.getLatitude(), location.getLongitude()));
+            }
+
+            if (mPanMode.get() == AutoPanMode.USER) {
+                Timber.d("User location changed.");
+                updateCamera(DroneHelper.LocationToCoord(location), (int) getMap().getCameraPosition().zoom);
+            }
+
+            if (mLocationListener != null) {
+                mLocationListener.onLocationChanged(location);
+            }
+        }
+    };
 
     private final GoogleApiClientTask mGoToMyLocationTask = new GoogleApiClientTask() {
         @Override
@@ -147,7 +208,7 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
     private final GoogleApiClientTask mRemoveLocationUpdateTask = new GoogleApiClientTask() {
         @Override
         public void doRun() {
-            LocationServices.FusedLocationApi.removeLocationUpdates(getGoogleApiClient(), GoogleMapFragment.this);
+            LocationServices.FusedLocationApi.removeLocationUpdates(getGoogleApiClient(), locationCb);
         }
     };
 
@@ -155,13 +216,13 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
         @Override
         public void doRun() {
             final LocationRequest locationReq = LocationRequest.create()
-                    .setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY)
+                    .setPriority(LocationRequest.PRIORITY_BALANCED_POWER_ACCURACY)
                     .setFastestInterval(USER_LOCATION_UPDATE_FASTEST_INTERVAL)
                     .setInterval(USER_LOCATION_UPDATE_INTERVAL)
                     .setSmallestDisplacement(USER_LOCATION_UPDATE_MIN_DISPLACEMENT);
-            LocationServices.FusedLocationApi.requestLocationUpdates(getGoogleApiClient(), locationReq,
-                    GoogleMapFragment.this);
 
+            LocationServices.FusedLocationApi.requestLocationUpdates(getGoogleApiClient(), locationReq,
+                    locationCb, handler.getLooper());
         }
     };
 
@@ -200,6 +261,15 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
     protected DroidPlannerApp dpApp;
     private Polygon footprintPoly;
 
+    /*
+    Tile overlay
+     */
+    private TileOverlay onlineTileProvider;
+    private TileOverlay offlineTileProvider;
+
+    private String mapboxId;
+    private String mapboxAccessToken;
+
     @Override
     public void onAttach(Activity activity) {
         super.onAttach(activity);
@@ -208,6 +278,8 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup viewGroup, Bundle bundle) {
+        setHasOptionsMenu(true);
+
         final FragmentActivity activity = getActivity();
         final Context context = activity.getApplicationContext();
 
@@ -247,6 +319,45 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
                 .unregisterReceiver(eventReceiver);
 
         mGApiClientMgr.stopSafely();
+    }
+
+    @Override
+    public void onCreateOptionsMenu(Menu menu, MenuInflater inflater){
+        super.onCreateOptionsMenu(menu, inflater);
+
+        inflater.inflate(R.menu.menu_google_map, menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item){
+        switch(item.getItemId()){
+            case R.id.menu_download_mapbox_map:
+                startActivity(new Intent(getContext(), DownloadMapboxMapActivity.class));
+                return true;
+
+            default:
+                return super.onOptionsItemSelected(item);
+        }
+    }
+
+    @Override
+    public void onPrepareOptionsMenu(Menu menu){
+        final MenuItem item = menu.findItem(R.id.menu_download_mapbox_map);
+        if(item != null) {
+            final boolean isEnabled = shouldShowDownloadMapMenuOption();
+            item.setEnabled(isEnabled);
+            item.setVisible(isEnabled);
+        }
+
+    }
+
+    private boolean shouldShowDownloadMapMenuOption(){
+        final Context context = getContext();
+        final @GoogleMapPrefConstants.TileProvider String tileProvider = GoogleMapPrefFragment.PrefManager
+                .getMapTileProvider(context);
+
+        return GoogleMapPrefConstants.MAPBOX_TILE_PROVIDER.equals(tileProvider)
+                && GoogleMapPrefFragment.PrefManager.addDownloadMenuOption(context);
     }
 
     @Override
@@ -665,17 +776,17 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
                 @Override
                 public void onMapReady(GoogleMap googleMap) {
                     final Activity activity = getActivity();
-                    if(activity == null)
+                    if (activity == null)
                         return;
 
-                    final View rootView = ((ViewGroup)activity.findViewById(android.R.id.content)).getChildAt(0);
-                    if(rootView == null)
+                    final View rootView = ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0);
+                    if (rootView == null)
                         return;
 
                     final int height = rootView.getHeight();
                     final int width = rootView.getWidth();
-                    Log.d(TAG, String.format(Locale.US, "Screen W %d, H %d", width, height));
-                    if(height > 0 && width > 0) {
+                    Timber.d("Screen W %d, H %d", width, height);
+                    if (height > 0 && width > 0) {
                         CameraUpdate animation = CameraUpdateFactory.newLatLngBounds(bounds, width, height, 100);
                         googleMap.animateCamera(animation);
                     }
@@ -704,7 +815,7 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
     @Override
     public void goToMyLocation() {
         if (!mGApiClientMgr.addTask(mGoToMyLocationTask)) {
-            Log.e(TAG, "Unable to add google api client task.");
+            Timber.e("Unable to add google api client task.");
         }
     }
 
@@ -784,7 +895,7 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
 
                 if (mMarkerClickListener != null) {
                     final MarkerInfo markerInfo = mBiMarkersMap.getKey(marker);
-                    if(markerInfo != null)
+                    if (markerInfo != null)
                         return mMarkerClickListener.onMarkerClick(markerInfo);
                 }
                 return false;
@@ -796,48 +907,130 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
         map.setMyLocationEnabled(false);
         UiSettings mUiSettings = map.getUiSettings();
         mUiSettings.setMyLocationButtonEnabled(false);
+        mUiSettings.setMapToolbarEnabled(false);
         mUiSettings.setCompassEnabled(false);
         mUiSettings.setTiltGesturesEnabled(false);
         mUiSettings.setZoomControlsEnabled(false);
+        mUiSettings.setRotateGesturesEnabled(mAppPrefs.isMapRotationEnabled());
     }
 
     private void setupMapOverlay(GoogleMap map) {
-        if (mAppPrefs.isOfflineMapEnabled()) {
-            setupOfflineMapOverlay(map);
-        } else {
-            setupOnlineMapOverlay(map);
+        final Context context = getContext();
+        if(context == null)
+            return;
+
+        final @GoogleMapPrefConstants.TileProvider String tileProvider = GoogleMapPrefFragment.PrefManager.getMapTileProvider(context);
+        switch(tileProvider){
+            case GoogleMapPrefConstants.GOOGLE_TILE_PROVIDER:
+                setupGoogleTileProvider(context, map);
+                break;
+
+            case GoogleMapPrefConstants.MAPBOX_TILE_PROVIDER:
+                setupMapboxTileProvider(context, map);
+                break;
         }
     }
 
-    private void setupOnlineMapOverlay(GoogleMap map) {
-        map.setMapType(getMapType());
+    private void setupGoogleTileProvider(Context context, GoogleMap map){
+        //Reset the mapbox id and access token
+        mapboxId = null;
+        mapboxAccessToken = null;
+
+        //Remove the mapbox tile providers
+        if(offlineTileProvider != null){
+            offlineTileProvider.remove();
+            offlineTileProvider = null;
+        }
+
+        if(onlineTileProvider != null){
+            onlineTileProvider.remove();
+            onlineTileProvider = null;
+        }
+
+        map.setMapType(GoogleMapPrefFragment.PrefManager.getMapType(context));
     }
 
-    private int getMapType() {
-        String mapType = mAppPrefs.getMapType();
+    private void setupMapboxTileProvider(Context context, GoogleMap map){
+        Timber.d("Enabling mapbox tile provider.");
 
-        if (mapType.equalsIgnoreCase(MAP_TYPE_SATELLITE)) {
-            return GoogleMap.MAP_TYPE_SATELLITE;
+        //Remove the default google map layer.
+        map.setMapType(GoogleMap.MAP_TYPE_NORMAL);
+
+        final GoogleMapPrefFragment.PrefManager prefManager = GoogleMapPrefFragment.PrefManager;
+        final String mapboxId = prefManager.getMapboxId(context);
+        final String mapboxAccessToken = prefManager.getMapboxAccessToken(context);
+        final int maxZoomLevel = (int) map.getMaxZoomLevel();
+
+        boolean wereCredentialsUpdated = !mapboxId.equals(this.mapboxId)
+                || !mapboxAccessToken.equals(this.mapboxAccessToken);
+
+        if(wereCredentialsUpdated || onlineTileProvider == null){
+            if(onlineTileProvider != null)
+                onlineTileProvider.remove();
+
+            final TileProvider tileProvider = new MapboxTileProvider(mapboxId, mapboxAccessToken, maxZoomLevel);
+            final TileOverlayOptions options = new TileOverlayOptions()
+                    .tileProvider(tileProvider)
+                    .zIndex(ONLINE_TILE_PROVIDER_Z_INDEX);
+
+            onlineTileProvider = map.addTileOverlay(options);
         }
-        if (mapType.equalsIgnoreCase(MAP_TYPE_HYBRID)) {
-            return GoogleMap.MAP_TYPE_HYBRID;
+
+        //Check if the offline provider is enabled as well.
+        if (prefManager.isOfflineMapLayerEnabled(context)) {
+            if(wereCredentialsUpdated || offlineTileProvider == null){
+                if(offlineTileProvider != null)
+                    offlineTileProvider.remove();
+
+                final TileProvider tileProvider = new OfflineTileProvider(context, mapboxId, mapboxAccessToken,
+                        maxZoomLevel);
+                final TileOverlayOptions options = new TileOverlayOptions()
+                        .tileProvider(tileProvider)
+                        .zIndex(OFFLINE_TILE_PROVIDER_Z_INDEX);
+
+                offlineTileProvider = map.addTileOverlay(options);
+            }
         }
-        if (mapType.equalsIgnoreCase(MAP_TYPE_NORMAL)) {
-            return GoogleMap.MAP_TYPE_NORMAL;
+        else{
+            if(offlineTileProvider != null){
+                offlineTileProvider.remove();
+                offlineTileProvider = null;
+            }
         }
-        if (mapType.equalsIgnoreCase(MAP_TYPE_TERRAIN)) {
-            return GoogleMap.MAP_TYPE_TERRAIN;
-        } else {
-            return GoogleMap.MAP_TYPE_SATELLITE;
-        }
+
+        this.mapboxId = mapboxId;
+        this.mapboxAccessToken = mapboxAccessToken;
+
+        //Check if the mapbox credentials are valid.
+        new AsyncTask<Void, Void, Integer>(){
+
+            @Override
+            protected Integer doInBackground(Void... params) {
+                final Context context = getContext();
+                return MapboxUtils.fetchReferenceTileUrl(context, mapboxId, mapboxAccessToken);
+            }
+
+            @Override
+            protected void onPostExecute(Integer result){
+                if(result != null){
+                    switch(result){
+                        case HttpURLConnection.HTTP_UNAUTHORIZED:
+                        case HttpURLConnection.HTTP_NOT_FOUND:
+                            //Invalid mapbox credentials
+                            Toast.makeText(getContext(), R.string.alert_invalid_mapbox_credentials, Toast.LENGTH_LONG).show();
+                            break;
+                    }
+                }
+            }
+        }.execute();
     }
 
-    private void setupOfflineMapOverlay(GoogleMap map) {
-        map.setMapType(GoogleMap.MAP_TYPE_NONE);
-        TileOverlay tileOverlay = map.addTileOverlay(new TileOverlayOptions()
-                .tileProvider(new LocalMapTileProvider()));
-        tileOverlay.setZIndex(-1);
-        tileOverlay.clearTileCache();
+    protected Context getContext(){
+        final Activity activity = getActivity();
+        if(activity == null)
+            return null;
+
+        return activity.getApplicationContext();
     }
 
     protected void clearMap() {
@@ -867,35 +1060,16 @@ public class GoogleMapFragment extends SupportMapFragment implements DPMap, Loca
         }
     }
 
-    @Override
-    public void onLocationChanged(Location location) {
-        //Update the user location icon.
-        if (userMarker == null) {
-            final MarkerOptions options = new MarkerOptions()
-                    .position(new LatLng(location.getLatitude(), location.getLongitude()))
-                    .draggable(false)
-                    .flat(true)
-                    .visible(true)
-                    .icon(BitmapDescriptorFactory.fromResource(R.drawable.blue));
+    public VisibleMapArea getVisibleMapArea(){
+        final GoogleMap map = getMap();
+        if(map == null)
+            return null;
 
-            getMapAsync(new OnMapReadyCallback() {
-                @Override
-                public void onMapReady(GoogleMap googleMap) {
-                    userMarker = googleMap.addMarker(options);
-                }
-            });
-        } else {
-            userMarker.setPosition(new LatLng(location.getLatitude(), location.getLongitude()));
-        }
-
-        if (mPanMode.get() == AutoPanMode.USER) {
-            Log.d(TAG, "User location changed.");
-            updateCamera(DroneHelper.LocationToCoord(location), (int) getMap().getCameraPosition().zoom);
-        }
-
-        if (mLocationListener != null) {
-            mLocationListener.onLocationChanged(location);
-        }
+        final VisibleRegion mapRegion = map.getProjection().getVisibleRegion();
+        return new VisibleMapArea(DroneHelper.LatLngToCoord(mapRegion.farLeft),
+                DroneHelper.LatLngToCoord(mapRegion.nearLeft),
+                DroneHelper.LatLngToCoord(mapRegion.nearRight),
+                DroneHelper.LatLngToCoord(mapRegion.farRight));
     }
 
     @Override

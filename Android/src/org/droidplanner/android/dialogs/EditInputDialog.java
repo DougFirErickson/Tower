@@ -1,9 +1,9 @@
 package org.droidplanner.android.dialogs;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.os.Bundle;
+import android.support.v7.app.AlertDialog;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.EditText;
@@ -23,8 +23,7 @@ public class EditInputDialog extends YesNoDialog {
         void onCancel();
     }
 
-    public static EditInputDialog newInstance(Context context, String title,
-                                              String hint, Listener listener){
+    public static EditInputDialog newInstance(String title, String hint, boolean hintIsValidEntry, Listener listener){
         EditInputDialog dialog = new EditInputDialog();
 
         Bundle bundle = new Bundle();
@@ -37,11 +36,13 @@ public class EditInputDialog extends YesNoDialog {
 
         dialog.setArguments(bundle);
         dialog.mListener = listener;
+        dialog.hintIsValidEntry = hintIsValidEntry;
 
         return dialog;
     }
 
     protected Listener mListener;
+    protected boolean hintIsValidEntry;
     private EditText mEditText;
 
     @Override
@@ -55,9 +56,15 @@ public class EditInputDialog extends YesNoDialog {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
                         CharSequence input = mEditText.getText();
-                        if(TextUtils.isEmpty(input)) input = mEditText.getHint();
+                        if (TextUtils.isEmpty(input) && hintIsValidEntry) {
+                            input = mEditText.getHint();
+                        }
 
-                        mListener.onOk(input);
+                        String value = null;
+                        if(input != null)
+                            value = input.toString().trim();
+
+                        mListener.onOk(value);
                     }
                 })
                 .setNegativeButton(android.R.string.cancel, new DialogInterface.OnClickListener() {

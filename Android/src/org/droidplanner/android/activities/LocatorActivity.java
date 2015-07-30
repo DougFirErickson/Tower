@@ -40,8 +40,6 @@ import java.util.List;
 public class LocatorActivity extends DrawerNavigationUI implements LocatorListFragment.OnLocatorListListener,
         LocationListener {
 
-    private static final String TAG = LocatorActivity.class.getSimpleName();
-
     private static final String STATE_LAST_SELECTED_POSITION = "STATE_LAST_SELECTED_POSITION";
     private static final int TLOG_PICKER_REQUEST_CODE = 101;
 
@@ -73,7 +71,12 @@ public class LocatorActivity extends DrawerNavigationUI implements LocatorListFr
 
         FragmentManager fragmentManager = getSupportFragmentManager();
 
-        locatorMapFragment = ((LocatorMapFragment) fragmentManager.findFragmentById(R.id.mapFragment));
+        locatorMapFragment = ((LocatorMapFragment) fragmentManager.findFragmentById(R.id.locator_map_fragment));
+        if(locatorMapFragment == null){
+            locatorMapFragment = new LocatorMapFragment();
+            fragmentManager.beginTransaction().add(R.id.locator_map_fragment, locatorMapFragment).commit();
+        }
+
         locatorListFragment = (LocatorListFragment) fragmentManager.findFragmentById(R.id.locatorListFragment);
 
         statusView = (LinearLayout) findViewById(R.id.statusView);
@@ -273,7 +276,7 @@ public class LocatorActivity extends DrawerNavigationUI implements LocatorListFr
                 distanceView.setText(R.string.status_waiting_for_gps, TextView.BufferType.NORMAL);
                 azimuthView.setText("");
             } else {
-                final double distance = MathUtils.getDistance(lastGCSPosition, msgCoord);
+                final double distance = MathUtils.getDistance2D(lastGCSPosition, msgCoord);
                 final LengthUnit convertedDistance = lengthUnitProvider.boxBaseValueToTarget(distance);
                 String distanceText = getString(R.string.editor_info_window_distance, convertedDistance.toString());
                 if (lastGCSBearingTo != Float.MAX_VALUE) {

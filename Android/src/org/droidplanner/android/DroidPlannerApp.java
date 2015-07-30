@@ -23,6 +23,7 @@ import com.o3dr.services.android.lib.drone.connection.ConnectionType;
 import com.o3dr.services.android.lib.drone.connection.DroneSharePrefs;
 
 import org.droidplanner.android.activities.helpers.BluetoothDevicesActivity;
+import org.droidplanner.android.maps.providers.google_map.tiles.mapbox.offline.MapDownloader;
 import org.droidplanner.android.notifications.NotificationHandler;
 import org.droidplanner.android.proxy.mission.MissionProxy;
 import org.droidplanner.android.utils.Utils;
@@ -33,9 +34,11 @@ import org.droidplanner.android.utils.prefs.DroidPlannerPrefs;
 import java.util.ArrayList;
 import java.util.List;
 
+import timber.log.Timber;
+
 public class DroidPlannerApp extends Application implements DroneListener, TowerListener {
 
-    private static final long DELAY_TO_DISCONNECTION = 5000l; // ms
+    private static final long DELAY_TO_DISCONNECTION = 1000l; // ms
 
     private static final String TAG = DroidPlannerApp.class.getSimpleName();
 
@@ -127,6 +130,7 @@ public class DroidPlannerApp extends Application implements DroneListener, Tower
     private DroidPlannerPrefs dpPrefs;
     private LocalBroadcastManager lbm;
     private NotificationHandler notificationHandler;
+    private MapDownloader mapDownloader;
 
     @Override
     public void onCreate() {
@@ -135,9 +139,10 @@ public class DroidPlannerApp extends Application implements DroneListener, Tower
 
         dpPrefs = new DroidPlannerPrefs(context);
         lbm = LocalBroadcastManager.getInstance(context);
+        mapDownloader = new MapDownloader(context);
 
         controlTower = new ControlTower(context);
-        drone = new Drone();
+        drone = new Drone(context);
         missionProxy = new MissionProxy(context, this.drone);
 
         final Thread.UncaughtExceptionHandler dpExceptionHandler = new Thread.UncaughtExceptionHandler() {
@@ -154,10 +159,18 @@ public class DroidPlannerApp extends Application implements DroneListener, Tower
         GAUtils.initGATracker(this);
         GAUtils.startNewSession(context);
 
+        if (BuildConfig.DEBUG) {
+            Timber.plant(new Timber.DebugTree());
+        }
+
         final IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(ACTION_TOGGLE_DRONE_CONNECTION);
 
         registerReceiver(broadcastReceiver, intentFilter);
+    }
+
+    public MapDownloader getMapDownloader() {
+        return mapDownloader;
     }
 
     public void addApiListener(ApiListener listener) {
@@ -266,6 +279,11 @@ public class DroidPlannerApp extends Application implements DroneListener, Tower
 
             case ConnectionType.TYPE_UDP:
                 extraParams.putInt(ConnectionType.EXTRA_UDP_SERVER_PORT, dpPrefs.getUdpServerPort());
+                if(dpPrefs.isUdpPingEnabled()){
+                    extraParams.putString(ConnectionType.EXTRA_UDP_PING_RECEIVER_IP, dpPrefs.getUdpPingReceiverIp());
+                    extraParams.putInt(ConnectionType.EXTRA_UDP_PING_RECEIVER_PORT, dpPrefs.getUdpPingReceiverPort());
+                    extraParams.putByteArray(ConnectionType.EXTRA_UDP_PING_PAYLOAD, "Hello".getBytes());
+                }
                 connParams = new ConnectionParameter(connectionType, extraParams, droneSharePrefs);
                 break;
 

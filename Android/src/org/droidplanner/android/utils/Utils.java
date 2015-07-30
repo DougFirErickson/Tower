@@ -3,10 +3,12 @@ package org.droidplanner.android.utils;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.os.Looper;
 
-import org.droidplanner.android.maps.providers.DPMapProvider;
 import org.droidplanner.android.utils.prefs.DroidPlannerPrefs;
 
+import java.io.IOException;
+import java.io.Reader;
 import java.util.Locale;
 
 /**
@@ -15,23 +17,6 @@ import java.util.Locale;
 public class Utils {
 
     public static final String PACKAGE_NAME = "org.droidplanner.android";
-
-    public static final String ACTION_UPDATE_OPTIONS_MENU = PACKAGE_NAME + ".UPDATE_OPTIONS_MENU";
-
-	/**
-	 * Returns the map provider selected by the user.
-	 * 
-	 * @param context
-	 *            application context
-	 * @return selected map provider
-	 */
-	public static DPMapProvider getMapProvider(Context context) {
-		DroidPlannerPrefs prefs = new DroidPlannerPrefs(context);
-		final String mapProviderName = prefs.getMapProviderName();
-
-		return mapProviderName == null ? DPMapProvider.DEFAULT_MAP_PROVIDER : DPMapProvider
-				.getMapProvider(mapProviderName);
-	}
 
 	/**
 	 * Used to update the user interface language.
@@ -49,4 +34,20 @@ public class Utils {
 			res.updateConfiguration(config, res.getDisplayMetrics());
 		}
 	}
+
+	public static boolean runningOnMainThread() {
+		return  Looper.myLooper() == Looper.getMainLooper();
+	}
+
+	public static String readAll(Reader rd) throws IOException {
+		StringBuilder sb = new StringBuilder();
+		int cp;
+		while ((cp = rd.read()) != -1) {
+			sb.append((char) cp);
+		}
+		return sb.toString();
+	}
+
+	//Private constructor to prevent instantiation.
+	private Utils(){}
 }

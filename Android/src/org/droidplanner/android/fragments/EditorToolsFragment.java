@@ -27,6 +27,7 @@ import com.o3dr.services.android.lib.drone.mission.MissionItemType;
 import com.o3dr.services.android.lib.drone.mission.item.spatial.BaseSpatialItem;
 
 import org.droidplanner.android.R;
+import org.droidplanner.android.dialogs.SupportYesNoDialog;
 import org.droidplanner.android.dialogs.YesNoDialog;
 import org.droidplanner.android.fragments.helpers.ApiListenerFragment;
 import org.droidplanner.android.proxy.mission.MissionProxy;
@@ -250,7 +251,6 @@ public class EditorToolsFragment extends ApiListenerFragment implements OnClickL
     @Override
     public void onClick(View v) {
         EditorTools newTool = getToolForView(v.getId());
-        if (newTool == this.tool) {
             final int xOff = (int) (v.getWidth() + popupLeftMargin);
             final int yOff = -v.getHeight();
             switch (newTool) {
@@ -270,7 +270,6 @@ public class EditorToolsFragment extends ApiListenerFragment implements OnClickL
                     markerPopup.showAsDropDown(v, xOff, yOff);
                     break;
             }
-        } else
             setTool(newTool);
     }
 
@@ -679,8 +678,9 @@ public class EditorToolsFragment extends ApiListenerFragment implements OnClickL
 
         private void doClearMissionConfirmation() {
             final Context context = editorToolsFragment.getContext();
-            YesNoDialog ynd = YesNoDialog.newInstance(context, context.getString(R.string.dlg_clear_mission_title),
-                    context.getString(R.string.dlg_clear_mission_confirm), new YesNoDialog.Listener() {
+            SupportYesNoDialog ynd = SupportYesNoDialog.newInstance(context, context.getString(R.string
+                            .dlg_clear_mission_title),
+                    context.getString(R.string.dlg_clear_mission_confirm), new SupportYesNoDialog.Listener() {
                         @Override
                         public void onYes() {
                             if (missionProxy != null) {
@@ -701,9 +701,9 @@ public class EditorToolsFragment extends ApiListenerFragment implements OnClickL
 
         private void deleteSelectedItems() {
             final Context context = editorToolsFragment.getContext();
-            YesNoDialog ynd = YesNoDialog.newInstance(context,
+            SupportYesNoDialog ynd = SupportYesNoDialog.newInstance(context,
                     context.getString(R.string.delete_selected_waypoints_title),
-                    context.getString(R.string.delete_selected_waypoints_confirm), new YesNoDialog.Listener() {
+                    context.getString(R.string.delete_selected_waypoints_confirm), new SupportYesNoDialog.Listener() {
                         @Override
                         public void onYes() {
                             if (missionProxy != null) {

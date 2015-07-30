@@ -7,6 +7,7 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentManager;
+import android.support.v4.content.LocalBroadcastManager;
 import android.support.v4.widget.DrawerLayout;
 import android.support.v7.app.ActionBar;
 import android.support.v7.app.ActionBarDrawerToggle;
@@ -22,7 +23,9 @@ import android.widget.TextView;
 
 import org.droidplanner.android.R;
 import org.droidplanner.android.activities.helpers.SuperUI;
+import org.droidplanner.android.fragments.SettingsFragment;
 import org.droidplanner.android.fragments.actionbar.ActionBarTelemFragment;
+import org.droidplanner.android.fragments.control.BaseFlightControlFragment;
 import org.droidplanner.android.widgets.SlidingDrawer;
 
 /**
@@ -90,6 +93,21 @@ public abstract class DrawerNavigationUI extends SuperUI implements SlidingDrawe
 
     protected View getActionDrawer() {
         return actionDrawer;
+    }
+
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data){
+        switch(requestCode) {
+            case BaseFlightControlFragment.FOLLOW_SETTINGS_UPDATE:
+                LocalBroadcastManager.getInstance(getApplicationContext())
+                        .sendBroadcast(new Intent(SettingsFragment.ACTION_LOCATION_SETTINGS_UPDATED)
+                                .putExtra(SettingsFragment.EXTRA_RESULT_CODE, resultCode));
+                break;
+
+            default:
+                super.onActivityResult(requestCode, resultCode, data);
+                break;
+        }
     }
 
     /**

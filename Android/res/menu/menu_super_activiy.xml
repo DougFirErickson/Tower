@@ -20,28 +20,12 @@
             android:id="@+id/menu_download_mission"
             app:showAsAction="never"
             android:title="@string/download_mission"/>
-
         <item
-            android:id="@+id/menu_advanced"
+            android:id="@+id/menu_kill_switch"
+            app:showAsAction="never"
             android:enabled="false"
             android:visible="false"
-            android:title="Advanced"
-            app:showAsAction="never">
-            <menu>
-                <item
-                    android:id="@+id/menu_triggerCamera"
-                    app:showAsAction="never"
-                    android:title="Picture"/>
-                <item
-                    android:id="@+id/menu_epm_release"
-                    app:showAsAction="never"
-                    android:title="Release"/>
-                <item
-                    android:id="@+id/menu_epm_grab"
-                    app:showAsAction="never"
-                    android:title="Grab"/>
-            </menu>
-        </item>
+            android:title="Kill Switch"/>
 
     </group>
 

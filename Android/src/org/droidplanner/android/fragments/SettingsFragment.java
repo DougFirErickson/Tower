@@ -11,6 +11,7 @@ import android.content.pm.PackageManager.NameNotFoundException;
 import android.os.Bundle;
 import android.os.Handler;
 import android.preference.CheckBoxPreference;
+import android.preference.EditTextPreference;
 import android.preference.ListPreference;
 import android.preference.Preference;
 import android.preference.PreferenceCategory;
@@ -23,12 +24,12 @@ import com.google.android.gms.analytics.GoogleAnalytics;
 import com.google.android.gms.analytics.HitBuilders;
 import com.o3dr.android.client.Drone;
 import com.o3dr.services.android.lib.drone.attribute.AttributeEvent;
-import com.o3dr.services.android.lib.drone.attribute.AttributeEventExtra;
 import com.o3dr.services.android.lib.drone.attribute.AttributeType;
 import com.o3dr.services.android.lib.drone.connection.ConnectionType;
 import com.o3dr.services.android.lib.drone.property.State;
 import com.o3dr.services.android.lib.drone.property.Type;
 
+import org.beyene.sius.unit.length.LengthUnit;
 import org.droidplanner.android.DroidPlannerApp;
 import org.droidplanner.android.R;
 import org.droidplanner.android.activities.helpers.MapPreferencesActivity;
@@ -38,6 +39,9 @@ import org.droidplanner.android.utils.Utils;
 import org.droidplanner.android.utils.analytics.GAUtils;
 import org.droidplanner.android.utils.file.DirectoryPath;
 import org.droidplanner.android.utils.prefs.DroidPlannerPrefs;
+import org.droidplanner.android.utils.unit.UnitManager;
+import org.droidplanner.android.utils.unit.providers.length.LengthUnitProvider;
+import org.droidplanner.android.utils.unit.systems.UnitSystem;
 
 import java.util.HashSet;
 import java.util.Locale;
@@ -53,7 +57,7 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
      */
     private final static String TAG = SettingsFragment.class.getSimpleName();
 
-    private static final String PACKAGE_NAME = SettingsFragment.class.getPackage().getName();
+    private static final String PACKAGE_NAME = Utils.PACKAGE_NAME;
 
     /**
      * Action used to broadcast updates to the period for the spoken status
@@ -62,9 +66,30 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
     public static final String ACTION_UPDATED_STATUS_PERIOD = PACKAGE_NAME + ".ACTION_UPDATED_STATUS_PERIOD";
 
     /**
+     * Action used to broadcast updates to the gps hdop display preference.
+     */
+    public static final String ACTION_PREF_HDOP_UPDATE = PACKAGE_NAME + ".ACTION_PREF_HDOP_UPDATE";
+
+    /**
+     * Action used to broadcast updates to the unit system.
+     */
+    public static final String ACTION_PREF_UNIT_SYSTEM_UPDATE = PACKAGE_NAME + ".ACTION_PREF_UNIT_SYSTEM_UPDATE";
+
+    /**
      * Used to retrieve the new period for the spoken status summary.
      */
     public static final String EXTRA_UPDATED_STATUS_PERIOD = "extra_updated_status_period";
+
+    public static final String ACTION_LOCATION_SETTINGS_UPDATED = PACKAGE_NAME + ".action.LOCATION_SETTINGS_UPDATED";
+    public static final String EXTRA_RESULT_CODE = "extra_result_code";
+
+    public static final String ACTION_ADVANCED_MENU_UPDATED = PACKAGE_NAME + ".action.ADVANCED_MENU_UPDATED";
+
+    /**
+     * Used to notify of an update to the map rotation preference.
+     */
+    public static final String ACTION_MAP_ROTATION_PREFERENCE_UPDATED = PACKAGE_NAME +
+            ".ACTION_MAP_ROTATION_PREFERENCE_UPDATED";
 
     private static final IntentFilter intentFilter = new IntentFilter();
 
@@ -75,6 +100,7 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
         intentFilter.addAction(AttributeEvent.HEARTBEAT_FIRST);
         intentFilter.addAction(AttributeEvent.HEARTBEAT_RESTORED);
         intentFilter.addAction(AttributeEvent.TYPE_UPDATED);
+        intentFilter.addAction(ACTION_PREF_UNIT_SYSTEM_UPDATE);
     }
 
     private final BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
@@ -87,17 +113,7 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
             final String action = intent.getAction();
             switch (action) {
                 case AttributeEvent.STATE_DISCONNECTED:
-                    updateMavlinkVersionPreference(null);
                     updateFirmwareVersionPreference(null);
-                    break;
-
-                case AttributeEvent.HEARTBEAT_FIRST:
-                case AttributeEvent.HEARTBEAT_RESTORED:
-                    int mavlinkVersion = intent.getIntExtra(AttributeEventExtra.EXTRA_MAVLINK_VERSION, -1);
-                    if (mavlinkVersion == -1)
-                        updateMavlinkVersionPreference(null);
-                    else
-                        updateMavlinkVersionPreference(String.valueOf(mavlinkVersion));
                     break;
 
                 case AttributeEvent.STATE_CONNECTED:
@@ -105,9 +121,13 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
                     Drone drone = dpApp.getDrone();
                     if (drone.isConnected()) {
                         Type droneType = drone.getAttribute(AttributeType.TYPE);
-                        updateFirmwareVersionPreference(droneType.getFirmwareVersion());
+                        updateFirmwareVersionPreference(droneType);
                     } else
                         updateFirmwareVersionPreference(null);
+                    break;
+
+                case ACTION_PREF_UNIT_SYSTEM_UPDATE:
+                    setupAltitudePreferences();
                     break;
             }
         }
@@ -142,43 +162,6 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
         lbm = LocalBroadcastManager.getInstance(context);
         final SharedPreferences sharedPref = dpPrefs.prefs;
 
-        setupPeriodicControls();
-
-        // Populate the map preference category
-        final String mapsProvidersPrefKey = getString(R.string.pref_maps_providers_key);
-        final ListPreference mapsProvidersPref = (ListPreference) findPreference(mapsProvidersPrefKey);
-        if (mapsProvidersPref != null) {
-            final DPMapProvider[] providers = DPMapProvider.values();
-            final int providersCount = providers.length;
-
-            final CharSequence[] providersNames = new CharSequence[providersCount];
-            final CharSequence[] providersNamesValues = new CharSequence[providersCount];
-            for (int i = 0; i < providersCount; i++) {
-                final String providerName = providers[i].name();
-                providersNamesValues[i] = providerName;
-                providersNames[i] = providerName.toLowerCase(Locale.ENGLISH).replace('_', ' ');
-            }
-
-            final String defaultProviderName = sharedPref.getString(mapsProvidersPrefKey,
-                    DPMapProvider.DEFAULT_MAP_PROVIDER.name());
-
-            mapsProvidersPref.setEntries(providersNames);
-            mapsProvidersPref.setEntryValues(providersNamesValues);
-            mapsProvidersPref.setValue(defaultProviderName);
-            mapsProvidersPref
-                    .setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
-
-                        @Override
-                        public boolean onPreferenceChange(Preference preference, Object newValue) {
-                            // Update the map provider settings preference.
-                            final String mapProviderName = newValue.toString();
-                            return updateMapSettingsPreference(mapProviderName);
-                        }
-                    });
-
-            updateMapSettingsPreference(defaultProviderName);
-        }
-
         // update the summary for the preferences in the mDefaultSummaryPrefs hash table.
         for (String prefKey : mDefaultSummaryPrefs) {
             final Preference pref = findPreference(prefKey);
@@ -188,7 +171,7 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
         }
 
         // Set the usage statistics preference
-        final String usageStatKey = getString(R.string.pref_usage_statistics_key);
+        final String usageStatKey = DroidPlannerPrefs.PREF_USAGE_STATISTICS;
         final CheckBoxPreference usageStatPref = (CheckBoxPreference) findPreference(usageStatKey);
         if (usageStatPref != null) {
             usageStatPref
@@ -204,13 +187,13 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
                     });
         }
 
-        final Preference storagePref = findPreference(getString(R.string.pref_storage_key));
+        final Preference storagePref = findPreference(DroidPlannerPrefs.PREF_STORAGE);
         if (storagePref != null) {
             storagePref.setSummary(DirectoryPath.getPublicDataPath());
         }
 
         try {
-            Preference versionPref = findPreference("pref_version");
+            Preference versionPref = findPreference(DroidPlannerPrefs.PREF_APP_VERSION);
             if (versionPref != null) {
                 String version = context.getPackageManager().getPackageInfo(
                         context.getPackageName(), 0).versionName;
@@ -220,22 +203,70 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
             Log.e(TAG, "Unable to retrieve version name.", e);
         }
 
-        updateMavlinkVersionPreference(null);
+        setupMapProviders();
+        setupPeriodicControls();
         setupConnectionPreferences();
-        setupAdvancedMenuToggle();
+        setupAdvancedMenu();
         setupUnitSystemPreferences();
         setupBluetoothDevicePreferences();
         setupImminentGroundCollisionWarningPreference();
+        setupMapPreferences();
+        setupAltitudePreferences();
     }
 
-    private void setupAdvancedMenuToggle(){
-        CheckBoxPreference togglePref = (CheckBoxPreference) findPreference(getString(R.string
-                .pref_advanced_menu_toggle_key));
-        if(togglePref != null){
-            togglePref.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
+    private void setupMapProviders(){
+        // Populate the map preference category
+        final String mapsProvidersPrefKey = DroidPlannerPrefs.PREF_MAPS_PROVIDERS;
+
+        final ListPreference mapsProvidersPref = (ListPreference) findPreference(mapsProvidersPrefKey);
+        if (mapsProvidersPref != null) {
+            final DPMapProvider[] providers = DPMapProvider.values();
+            final int providersCount = providers.length;
+
+            final CharSequence[] providersNames = new CharSequence[providersCount];
+            final CharSequence[] providersNamesValues = new CharSequence[providersCount];
+            for (int i = 0; i < providersCount; i++) {
+                final String providerName = providers[i].name();
+                providersNamesValues[i] = providerName;
+                providersNames[i] = providerName.toLowerCase(Locale.ENGLISH).replace('_', ' ');
+            }
+
+            final String defaultProviderName = dpPrefs.getMapProviderName();
+
+            mapsProvidersPref.setEntries(providersNames);
+            mapsProvidersPref.setEntryValues(providersNamesValues);
+            mapsProvidersPref.setValue(defaultProviderName);
+            mapsProvidersPref.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
+
                 @Override
                 public boolean onPreferenceChange(Preference preference, Object newValue) {
-                    lbm.sendBroadcast(new Intent(Utils.ACTION_UPDATE_OPTIONS_MENU));
+                    // Update the map provider settings preference.
+                    final String mapProviderName = newValue.toString();
+                    return updateMapSettingsPreference(mapProviderName);
+                }
+            });
+
+            updateMapSettingsPreference(defaultProviderName);
+        }
+    }
+
+    private void setupAdvancedMenu(){
+        final CheckBoxPreference hdopToggle = (CheckBoxPreference) findPreference(DroidPlannerPrefs.PREF_SHOW_GPS_HDOP);
+        if(hdopToggle !=  null) {
+            hdopToggle.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
+                @Override
+                public boolean onPreferenceChange(Preference preference, Object newValue) {
+                    lbm.sendBroadcast(new Intent(ACTION_PREF_HDOP_UPDATE));
+                    return true;
+                }
+            });
+        }
+        final CheckBoxPreference killSwitch = (CheckBoxPreference) findPreference(DroidPlannerPrefs.PREF_ENABLE_KILL_SWITCH);
+        if(killSwitch != null) {
+            killSwitch.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
+                @Override
+                public boolean onPreferenceChange(Preference preference, Object newValue) {
+                    lbm.sendBroadcast(new Intent(ACTION_ADVANCED_MENU_UPDATED));
                     return true;
                 }
             });
@@ -243,7 +274,7 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
     }
 
     private void setupUnitSystemPreferences(){
-        ListPreference unitSystemPref = (ListPreference) findPreference(getString(R.string.pref_unit_system_key));
+        ListPreference unitSystemPref = (ListPreference) findPreference(DroidPlannerPrefs.PREF_UNIT_SYSTEM);
         if(unitSystemPref != null){
             int defaultUnitSystem = dpPrefs.getUnitSystemType();
             updateUnitSystemSummary(unitSystemPref, defaultUnitSystem);
@@ -252,15 +283,26 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
                 public boolean onPreferenceChange(Preference preference, Object newValue) {
                     int unitSystem = Integer.parseInt((String) newValue);
                     updateUnitSystemSummary(preference, unitSystem);
+                    lbm.sendBroadcast(new Intent(ACTION_PREF_UNIT_SYSTEM_UPDATE));
                     return true;
                 }
             });
         }
     }
 
+    private void setupMapPreferences(){
+        final CheckBoxPreference mapRotation = (CheckBoxPreference) findPreference(DroidPlannerPrefs.PREF_ENABLE_MAP_ROTATION);
+        mapRotation.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
+            @Override
+            public boolean onPreferenceChange(Preference preference, Object newValue) {
+                lbm.sendBroadcast(new Intent(ACTION_MAP_ROTATION_PREFERENCE_UPDATED));
+                return true;
+            }
+        });
+    }
+
     private void setupImminentGroundCollisionWarningPreference(){
-        final CheckBoxPreference collisionWarn = (CheckBoxPreference) findPreference(getString(R.string
-                .pref_ground_collision_warning_key));
+        final CheckBoxPreference collisionWarn = (CheckBoxPreference) findPreference(DroidPlannerPrefs.PREF_WARNING_GROUND_COLLISION);
         if(collisionWarn != null){
             collisionWarn.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
                 @Override
@@ -297,7 +339,7 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
     }
 
     private void setupConnectionPreferences() {
-        ListPreference connectionTypePref = (ListPreference) findPreference(getString(R.string.pref_connection_type_key));
+        ListPreference connectionTypePref = (ListPreference) findPreference(DroidPlannerPrefs.PREF_CONNECTION_TYPE);
         if (connectionTypePref != null) {
             int defaultConnectionType = dpPrefs.getConnectionParameterType();
             updateConnectionPreferenceSummary(connectionTypePref, defaultConnectionType);
@@ -314,19 +356,61 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
     }
 
     private void setupBluetoothDevicePreferences(){
-        final ClearBTDialogPreference preference = (ClearBTDialogPreference) findPreference(getString(R.string
-                .pref_bluetooth_device_address_key));
+        final ClearBTDialogPreference preference = (ClearBTDialogPreference) findPreference(DroidPlannerPrefs.PREF_BT_DEVICE_ADDRESS);
         if(preference != null){
             updateBluetoothDevicePreference(preference, dpPrefs.getBluetoothDeviceAddress());
             preference.setOnResultListener(new ClearBTDialogPreference.OnResultListener() {
                 @Override
                 public void onResult(boolean result) {
-                    if(result){
+                    if (result) {
                         updateBluetoothDevicePreference(preference, dpPrefs.getBluetoothDeviceAddress());
                     }
                 }
             });
         }
+    }
+
+    private void setupAltitudePreferences(){
+        setupAltitudePreferenceHelper(DroidPlannerPrefs.PREF_ALT_MAX_VALUE, dpPrefs.getMaxAltitude());
+        setupAltitudePreferenceHelper(DroidPlannerPrefs.PREF_ALT_MIN_VALUE, dpPrefs.getMinAltitude());
+        setupAltitudePreferenceHelper(DroidPlannerPrefs.PREF_ALT_DEFAULT_VALUE, dpPrefs.getDefaultAltitude());
+    }
+
+    private void setupAltitudePreferenceHelper(final String prefKey, int defaultAlt){
+        final LengthUnitProvider lup = getLengthUnitProvider();
+
+        final EditTextPreference altPref = (EditTextPreference) findPreference(prefKey);
+        if(altPref != null){
+            final LengthUnit altValue = lup.boxBaseValueToTarget(defaultAlt);
+
+            altPref.setText(String.valueOf((int) altValue.getValue()));
+            altPref.setSummary(altValue.toString());
+
+            altPref.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
+                @Override
+                public boolean onPreferenceChange(Preference preference, Object newValue) {
+                    try {
+                        final int altValue = Integer.parseInt(newValue.toString());
+
+                        final LengthUnitProvider lup = getLengthUnitProvider();
+                        final LengthUnit newAltValue = lup.boxTargetValue(altValue);
+
+                        altPref.setText(String.valueOf((int) newAltValue.getValue()));
+                        altPref.setSummary(newAltValue.toString());
+
+                        dpPrefs.setAltitudePreference(prefKey, (int) lup.fromTargetToBase(newAltValue).getValue());
+                    } catch (NumberFormatException e) {
+
+                    }
+                    return false;
+                }
+            });
+        }
+    }
+
+    private LengthUnitProvider getLengthUnitProvider(){
+        final UnitSystem unitSystem = UnitManager.getUnitSystem(getActivity().getApplicationContext());
+        return unitSystem.getLengthUnitProvider();
     }
 
     private void updateBluetoothDevicePreference(Preference preference, String deviceAddress){
@@ -379,46 +463,54 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
     private void initSummaryPerPrefs() {
         mDefaultSummaryPrefs.clear();
 
-        mDefaultSummaryPrefs.add(getString(R.string.pref_baud_type_key));
-        mDefaultSummaryPrefs.add(getString(R.string.pref_server_port_key));
-        mDefaultSummaryPrefs.add(getString(R.string.pref_server_ip_key));
-        mDefaultSummaryPrefs.add(getString(R.string.pref_udp_server_port_key));
-        mDefaultSummaryPrefs.add(getString(R.string.pref_rc_quickmode_left_key));
-        mDefaultSummaryPrefs.add(getString(R.string.pref_rc_quickmode_right_key));
+        mDefaultSummaryPrefs.add(DroidPlannerPrefs.PREF_USB_BAUD_RATE);
+        mDefaultSummaryPrefs.add(DroidPlannerPrefs.PREF_TCP_SERVER_PORT);
+        mDefaultSummaryPrefs.add(DroidPlannerPrefs.PREF_TCP_SERVER_IP);
+        mDefaultSummaryPrefs.add(DroidPlannerPrefs.PREF_UDP_SERVER_PORT);
+        mDefaultSummaryPrefs.add(DroidPlannerPrefs.PREF_UDP_PING_RECEIVER_IP);
+        mDefaultSummaryPrefs.add(DroidPlannerPrefs.PREF_UDP_PING_RECEIVER_PORT);
     }
 
-    /**
-     * This is used to update the mavlink version preference.
-     *
-     * @param version mavlink version
-     */
-    private void updateMavlinkVersionPreference(String version) {
-        final Preference mavlinkVersionPref = findPreference(getString(R.string.pref_mavlink_version_key));
-        if (mavlinkVersionPref != null) {
-            final HitBuilders.EventBuilder mavlinkEvent = new HitBuilders.EventBuilder()
-                    .setCategory(GAUtils.Category.MAVLINK_CONNECTION);
+    private void updateFirmwareVersionPreference(Type droneType) {
+        String firmwareVersion = droneType == null ? null : droneType.getFirmwareVersion();
 
-            if (version == null) {
-                mavlinkVersionPref.setSummary(getString(R.string.empty_content));
-                mavlinkEvent.setAction("Mavlink version unset");
-            } else {
-                mavlinkVersionPref.setSummary('v' + version);
-                mavlinkEvent.setAction("Mavlink version set").setLabel(version);
+        final Preference vehicleTypePref = findPreference(DroidPlannerPrefs.PREF_VEHICLE_TYPE);
+        if(vehicleTypePref != null){
+            if(droneType == null){
+                vehicleTypePref.setSummary(R.string.empty_content);
             }
+            else{
+                final int typeLabelResId;
+                switch(droneType.getDroneType()){
+                    case Type.TYPE_COPTER:
+                        typeLabelResId = R.string.label_type_copter;
+                        break;
 
-            // Record the mavlink version
-            GAUtils.sendEvent(mavlinkEvent);
+                    case Type.TYPE_PLANE:
+                        typeLabelResId = R.string.label_type_plane;
+                        break;
+
+                    case Type.TYPE_ROVER:
+                        typeLabelResId = R.string.label_type_rover;
+                        break;
+
+                    case Type.TYPE_UNKNOWN:
+                    default:
+                        typeLabelResId = R.string.label_type_unknown;
+                        break;
+                }
+
+                vehicleTypePref.setSummary(typeLabelResId);
+            }
         }
-    }
 
-    private void updateFirmwareVersionPreference(String firmwareVersion) {
-        final Preference firmwareVersionPref = findPreference(getString(R.string.pref_firmware_version_key));
+        final Preference firmwareVersionPref = findPreference(DroidPlannerPrefs.PREF_FIRMWARE_VERSION);
         if (firmwareVersionPref != null) {
             final HitBuilders.EventBuilder firmwareEvent = new HitBuilders.EventBuilder()
                     .setCategory(GAUtils.Category.MAVLINK_CONNECTION);
 
             if (firmwareVersion == null) {
-                firmwareVersionPref.setSummary(getString(R.string.empty_content));
+                firmwareVersionPref.setSummary(R.string.empty_content);
                 firmwareEvent.setAction("Firmware version unset");
             } else {
                 firmwareVersionPref.setSummary(firmwareVersion);
@@ -435,7 +527,9 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
         if (mapProvider == null)
             return false;
 
-        final Preference providerPrefs = findPreference(getText(R.string.pref_map_provider_settings_key));
+
+
+        final Preference providerPrefs = findPreference(DroidPlannerPrefs.PREF_MAPS_PROVIDER_SETTINGS);
         if (providerPrefs != null) {
             providerPrefs.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
                 @Override
@@ -462,7 +556,7 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
     }
 
     private void setupPeriodicControls() {
-        final PreferenceCategory periodicSpeechPrefs = (PreferenceCategory) findPreference(getString(R.string.pref_tts_periodic_key));
+        final PreferenceCategory periodicSpeechPrefs = (PreferenceCategory) findPreference(DroidPlannerPrefs.PREF_TTS_PERIODIC);
         ListPreference periodic = ((ListPreference) periodicSpeechPrefs.getPreference(0));
         periodic.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
             @Override
@@ -528,18 +622,8 @@ public class SettingsFragment extends PreferenceFragment implements OnSharedPref
         Drone drone = dpApp.getDrone();
         State droneState = drone.getAttribute(AttributeType.STATE);
         Type droneType = drone.getAttribute(AttributeType.TYPE);
-        final int mavlinkVersion = droneState == null
-                ? State.INVALID_MAVLINK_VERSION
-                : droneState.getMavlinkVersion();
 
-        if (mavlinkVersion != State.INVALID_MAVLINK_VERSION) {
-            updateMavlinkVersionPreference(String.valueOf(mavlinkVersion));
-        } else {
-            updateMavlinkVersionPreference(null);
-        }
-
-        String firmwareVersion = droneType == null ? null : droneType.getFirmwareVersion();
-        updateFirmwareVersionPreference(firmwareVersion);
+        updateFirmwareVersionPreference(droneType);
 
         lbm.registerReceiver(broadcastReceiver, intentFilter);
     }
